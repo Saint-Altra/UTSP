@@ -1,52 +1,38 @@
-"use strict";
-
-const canvas = document.getElementById("game-canvas");
-const ctx    = canvas.getContext("2d");
-
-/* ─── Player ─────────────────────────────────────────────── */
-const player = {
-  x: 100,
-  y: 300,
-  w: 32,
-  h: 48,
-  speed: 3,
-  color: "#4f6ef7",
-};
-
-/* ─── Input ──────────────────────────────────────────────── */
-const keys = {};
-document.addEventListener("keydown", e => keys[e.key] = true);
-document.addEventListener("keyup",   e => keys[e.key] = false);
-
-/* ─── Resize ─────────────────────────────────────────────── */
-function resize() {
-  canvas.width  = window.innerWidth;
-  canvas.height = window.innerHeight;
-}
-window.addEventListener("resize", resize);
-resize();
-
-/* ─── Game loop ──────────────────────────────────────────── */
-function loop() {
-  // Movement — left/right only
-  if (keys["ArrowLeft"]  || keys["a"] || keys["A"]) player.x -= player.speed;
-  if (keys["ArrowRight"] || keys["d"] || keys["D"]) player.x += player.speed;
-
-  // Keep player inside canvas
-  player.x = Math.max(0, Math.min(canvas.width - player.w, player.x));
-
-  // Clear
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-  // Draw ground line
-  ctx.fillStyle = "#2a2a4a";
-  ctx.fillRect(0, canvas.height - 60, canvas.width, 60);
-
-  // Draw player
-  ctx.fillStyle = player.color;
-  ctx.fillRect(player.x, player.y, player.w, player.h);
-
-  requestAnimationFrame(loop);
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
 }
 
-loop();
+body {
+  background: #1a1a2e;
+  overflow: hidden;
+}
+
+#game-canvas {
+  display: block;
+  width: 100vw;
+  height: 100vh;
+}
+
+.hidden {
+  display: none !important;
+}
+
+/* Modal — unstyled for now, design later */
+#modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+#modal {
+  background: #fff;
+  padding: 40px;
+  border-radius: 8px;
+  min-width: 300px;
+  min-height: 200px;
+}
