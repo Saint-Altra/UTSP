@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Portfolio World</title>
+  <link rel="stylesheet" href="style.css" />
+
+  <!-- Google Fonts: pixel-style + clean body font -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet" />
+</head>
+<body>
+
+  <!-- ═══════════════════════════════════════════
+       LOADING SCREEN
+  ═══════════════════════════════════════════ -->
+  <div id="loading-screen">
+    <div class="loading-content">
+      <h1 class="loading-title">PORTFOLIO<br/>WORLD</h1>
+      <div class="loading-bar-wrap">
+        <div class="loading-bar" id="loading-bar"></div>
+      </div>
+      <p class="loading-hint">Loading assets…</p>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════
+       GAME CONTAINER
+  ═══════════════════════════════════════════ -->
+  <div id="game-container">
+
+    <!-- Top HUD -->
+    <div id="hud">
+      <span class="hud-title">PORTFOLIO WORLD</span>
+      <div class="hud-right">
+        <span id="hud-hint">Walk up to an NPC and press <kbd>E</kbd> or click them</span>
+      </div>
+    </div>
+
+    <!-- Main game canvas -->
+    <canvas id="game-canvas"></canvas>
+
+    <!-- Interact prompt (shows when near NPC) -->
+    <div id="interact-prompt" class="hidden">
+      <span class="prompt-key">E</span>
+      <span class="prompt-text">Talk</span>
+    </div>
+
+    <!-- D-pad for mobile -->
+    <div id="dpad">
+      <button class="dpad-btn" id="btn-up"    aria-label="Up">▲</button>
+      <button class="dpad-btn" id="btn-left"  aria-label="Left">◀</button>
+      <button class="dpad-btn" id="btn-down"  aria-label="Down">▼</button>
+      <button class="dpad-btn" id="btn-right" aria-label="Right">▶</button>
+      <button class="dpad-btn dpad-center" id="btn-interact" aria-label="Interact">E</button>
+    </div>
+
+  </div><!-- /#game-container -->
+
+
+  <!-- ═══════════════════════════════════════════
+       PORTFOLIO MODAL OVERLAY
+  ═══════════════════════════════════════════ -->
+  <div id="modal-overlay" class="hidden" role="dialog" aria-modal="true" aria-labelledby="modal-npc-name">
+
+    <div id="modal" class="modal-panel">
+
+      <!-- Sidebar -->
+      <aside id="modal-sidebar">
+        <div id="modal-avatar-wrap">
+          <canvas id="modal-avatar" width="96" height="96"></canvas>
+        </div>
+        <h2 id="modal-npc-name">NPC Name</h2>
+        <p  id="modal-npc-role">Role</p>
+        <hr class="sidebar-divider" />
+        <nav id="modal-tabs" role="tablist">
+          <button class="tab-btn active" data-tab="about"    role="tab">About</button>
+          <button class="tab-btn"        data-tab="projects" role="tab">Projects</button>
+          <button class="tab-btn"        data-tab="resume"   role="tab">Resume</button>
+        </nav>
+        <button id="modal-close" aria-label="Close portfolio">✕ Close</button>
+      </aside>
+
+      <!-- Main content area -->
+      <main id="modal-content">
+
+        <!-- About tab -->
+        <section id="tab-about" class="tab-panel active">
+          <h3 class="panel-title">About Me</h3>
+          <p id="about-bio"></p>
+          <div id="about-skills" class="skills-grid"></div>
+          <div id="about-links" class="link-row"></div>
+        </section>
+
+        <!-- Projects tab -->
+        <section id="tab-projects" class="tab-panel hidden">
+          <h3 class="panel-title">Projects</h3>
+          <div id="projects-grid" class="projects-grid"></div>
+        </section>
+
+        <!-- Resume tab -->
+        <section id="tab-resume" class="tab-panel hidden">
+          <h3 class="panel-title">Resume / CV</h3>
+          <div id="resume-preview" class="resume-wrap">
+            <iframe id="resume-iframe" title="Resume PDF"></iframe>
+          </div>
+          <a id="resume-download" class="dl-btn" download>⬇ Download PDF</a>
+        </section>
+
+      </main>
+
+    </div><!-- /#modal -->
+  </div><!-- /#modal-overlay -->
+
+
+  <!-- ═══════════════════════════════════════════
+       SCRIPTS  (order matters)
+  ═══════════════════════════════════════════ -->
+
+  <!--
+    NPC data files — each exports window.NPC_DATA_X.
+    Uncomment / add these once you create the portfolio folders.
+
+    <script src="portfolios/npc1/data.js"></script>
+    <script src="portfolios/npc2/data.js"></script>
+    <script src="portfolios/npc3/data.js"></script>
+    <script src="portfolios/npc4/data.js"></script>
+    <script src="portfolios/npc5/data.js"></script>
+    <script src="portfolios/npc6/data.js"></script>
+    <script src="portfolios/npc7/data.js"></script>
+    <script src="portfolios/npc8/data.js"></script>
+  -->
+
+  <!-- NPC config + portfolio template -->
+  <script src="npcs/npc-config.js"></script>
+  <script src="npcs/portfolio-template.js"></script>
+
+  <!-- Main game logic -->
+  <script src="game.js"></script>
+
+</body>
+</html>
