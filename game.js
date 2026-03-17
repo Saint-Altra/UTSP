@@ -38,7 +38,7 @@
   /* ─── Camera — smooth lerp ───────────────────────────── */
   var cam    = { x: 0, y: 0 };
   var camTarget = { x: 0, y: 0 };
-  var CAM_LERP  = 0.08;   // 0=no movement 1=instant. 0.08 = smooth
+  var CAM_LERP  = 0.12;   // smoother camera
 
   function updateCamera() {
     camTarget.x = player.x + PLAYER_W / 2 - VIEW_W / 2;
@@ -228,37 +228,29 @@
     var rightX = player.x + PLAYER_W - 4;
 
     if (player.vy >= 0) {
-      /* Falling — check feet */
+      /* Falling — snap feet to top of tile boundary */
       var feetY = player.y + PLAYER_H;
       if (
         isSolidPixel(leftX,  feetY) ||
         isSolidPixel(midX,   feetY) ||
         isSolidPixel(rightX, feetY)
       ) {
-        /* Snap: move back up until feet are free */
-        player.y  -= player.vy;   // undo this frame's move
-        /* Step down one pixel at a time to find exact surface */
-        while (
-          !isSolidPixel(leftX,  player.y + PLAYER_H) &&
-          !isSolidPixel(midX,   player.y + PLAYER_H) &&
-          !isSolidPixel(rightX, player.y + PLAYER_H)
-        ) {
-          player.y++;
-        }
-        player.y--;   // one pixel back so feet aren't inside tile
-        player.vy      = 0;
+        var feetRow     = Math.floor(feetY / STH);
+        player.y        = feetRow * STH - PLAYER_H;
+        player.vy       = 0;
         player.onGround = true;
       }
     } else {
-      /* Rising — check head */
+      /* Rising — snap head to bottom of tile above */
       var headY = player.y;
       if (
         isSolidPixel(leftX,  headY) ||
         isSolidPixel(midX,   headY) ||
         isSolidPixel(rightX, headY)
       ) {
-        player.y -= player.vy;
-        player.vy = 0;
+        var headRow = Math.floor(headY / STH);
+        player.y    = (headRow + 1) * STH;
+        player.vy   = 0;
       }
     }
 
