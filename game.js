@@ -14,20 +14,20 @@
   /* ─── Tile + map ─────────────────────────────────────── */
   var TILE_W   = 16;
   var TILE_H   = 16;
-  var SCALE    = 3;
-  var STW      = TILE_W * SCALE;   // 48px
-  var STH      = TILE_H * SCALE;   // 48px
+  var SCALE    = 4;              // zoomed in — tiles are 64×64px
+  var STW      = TILE_W * SCALE;
+  var STH      = TILE_H * SCALE;
   var MAP_COLS = 40;
   var MAP_ROWS = 20;
-  var MAP_PX_W = MAP_COLS * STW;   // 1920
-  var MAP_PX_H = MAP_ROWS * STH;   // 960
+  var MAP_PX_W = MAP_COLS * STW;
+  var MAP_PX_H = MAP_ROWS * STH;
 
-  /* ─── Player — exactly 3 tiles tall ─────────────────── */
-  var PLAYER_H = STH * 3;          // 144px
-  var PLAYER_W = Math.floor(STW * 1.5);  // 72px
+  /* ─── Player — 3 tiles tall ──────────────────────────── */
+  var PLAYER_H = STH * 3;
+  var PLAYER_W = Math.floor(STW * 1.5);
 
   var player = {
-    x:        STW * 4,
+    x:        0,
     y:        0,
     vy:       0,
     speed:    5,
@@ -35,19 +35,42 @@
     onGround: false,
   };
 
-  /* ─── Camera ─────────────────────────────────────────── */
-  var cam = { x: 0, y: 0 };
+  /* ─── Camera — smooth lerp ───────────────────────────── */
+  var cam    = { x: 0, y: 0 };
+  var camTarget = { x: 0, y: 0 };
+  var CAM_LERP  = 0.08;   // 0=no movement 1=instant. 0.08 = smooth
 
   function updateCamera() {
-    cam.x = player.x + PLAYER_W / 2 - VIEW_W / 2;
-    cam.y = player.y + PLAYER_H / 2 - VIEW_H / 2;
-    cam.x = Math.max(0, Math.min(MAP_PX_W - VIEW_W, cam.x));
-    cam.y = Math.max(0, Math.min(MAP_PX_H - VIEW_H, cam.y));
+    camTarget.x = player.x + PLAYER_W / 2 - VIEW_W / 2;
+    camTarget.y = player.y + PLAYER_H / 2 - VIEW_H / 2;
+    camTarget.x = Math.max(0, Math.min(MAP_PX_W - VIEW_W, camTarget.x));
+    camTarget.y = Math.max(0, Math.min(MAP_PX_H - VIEW_H, camTarget.y));
+
+    /* Lerp camera toward target */
+    cam.x += (camTarget.x - cam.x) * CAM_LERP;
+    cam.y += (camTarget.y - cam.y) * CAM_LERP;
+  }
+
+  /* ─── Parallax — centered on spawn, drifts with player ─
+     offsetX = (playerX - spawnX) * factor
+     So at spawn there's zero parallax shift.
+     The further the player walks, the more it shifts.
+     Factor is small so it never deviates much.           */
+  var spawnX = 0;   // set after map loads
+  var PAR_1BG  = 0.04;
+  var PAR_2BG  = 0.08;
+  var PAR_2BG2 = 0.12;
+
+  function drawParallax(data, factor) {
+    if (!data) return;
+    var playerCX = player.x + PLAYER_W / 2;
+    var shift    = (playerCX - spawnX) * factor;
+    drawLayer(data, cam.x * 1 + shift, cam.y);
   }
 
   /* ─── Tilesets ───────────────────────────────────────── */
   var TILESETS = [
-    { firstgid: 1,    src: "assets/Tiles.png",              img: null, cols: 6 },
+    { firstgid: 1,    src: "assets/Tiles.png",              img: null, cols: 6  },
     { firstgid: 55,   src: "assets/Props-01.png",           img: null, cols: null },
     { firstgid: 167,  src: "assets/Buildings.png",          img: null, cols: null },
     { firstgid: 542,  src: "assets/Background%20Props.png", img: null, cols: null },
@@ -56,81 +79,33 @@
     { firstgid: 1320, src: "assets/Mid%20Fog.png",          img: null, cols: null },
   ];
 
-  /* ─── Pixel-perfect collision data ──────────────────────
-     Built once at load from Tiles.png.
-     solidPixels[tileLocalId][pixelIndex] = true/false
-     pixelIndex = py * TILE_W + px  (within the 16x16 tile)
-  ──────────────────────────────────────────────────────── */
-  var solidPixels = {};   // keyed by local tile id (0-based)
+  /* ─── Pixel collision data (built once from Tiles.png) ─ */
+  var solidPixels = {};
   var TILES_COLS  = 6;
   var TILES_ROWS  = 9;
 
-  function buildCollisionData(tilesImg) {
-    /* Draw Tiles.png onto an offscreen canvas to read pixels */
-    var oc  = document.createElement("canvas");
-    oc.width  = TILES_COLS * TILE_W;   // 96
-    oc.height = TILES_ROWS * TILE_H;   // 144
-    var ox  = oc.getContext("2d");
-    ox.drawImage(tilesImg, 0, 0);
+  function buildCollisionData(img) {
+    var oc    = document.createElement("canvas");
+    oc.width  = TILES_COLS * TILE_W;
+    oc.height = TILES_ROWS * TILE_H;
+    var ox    = oc.getContext("2d");
+    ox.drawImage(img, 0, 0);
+    var pixels = ox.getImageData(0, 0, oc.width, oc.height).data;
 
-    var imgData = ox.getImageData(0, 0, oc.width, oc.height);
-    var pixels  = imgData.data;   // RGBA flat array
-
-    var totalTiles = TILES_COLS * TILES_ROWS;   // 54
-    for (var t = 0; t < totalTiles; t++) {
-      var tileCol = t % TILES_COLS;
-      var tileRow = Math.floor(t / TILES_COLS);
-      var solid   = new Uint8Array(TILE_W * TILE_H);
-
+    for (var t = 0; t < TILES_COLS * TILES_ROWS; t++) {
+      var tCol  = t % TILES_COLS;
+      var tRow  = Math.floor(t / TILES_COLS);
+      var solid = new Uint8Array(TILE_W * TILE_H);
       for (var py = 0; py < TILE_H; py++) {
         for (var px = 0; px < TILE_W; px++) {
-          /* pixel position in the full spritesheet */
-          var sheetX = tileCol * TILE_W + px;
-          var sheetY = tileRow * TILE_H + py;
-          var idx    = (sheetY * oc.width + sheetX) * 4;
-          /* alpha channel — if > 0 the pixel is solid */
+          var sx  = tCol * TILE_W + px;
+          var sy  = tRow * TILE_H + py;
+          var idx = (sy * oc.width + sx) * 4;
           solid[py * TILE_W + px] = pixels[idx + 3] > 0 ? 1 : 0;
         }
       }
       solidPixels[t] = solid;
     }
-  }
-
-  /* ─── Check a single world pixel against ground layer ── */
-  function isSolidPixel(worldX, worldY) {
-    if (!layers.ground) return false;
-
-    /* Which tile are we in? */
-    var col = Math.floor(worldX / STW);
-    var row = Math.floor(worldY / STH);
-    if (col < 0 || col >= MAP_COLS || row < 0 || row >= MAP_ROWS) return false;
-
-    var gid = layers.ground[row * MAP_COLS + col] & 0x1FFFFFFF;
-    if (gid === 0) return false;
-
-    /* Only ground tiles (firstgid 1, tileset Tiles.png) have pixel collision */
-    var ts = getTileset(gid);
-    if (!ts || ts.firstgid !== 1) {
-      /* Non-Tiles.png tile — treat whole tile as solid */
-      return true;
-    }
-
-    var localId = gid - 1;   // 0-based
-    var solid   = solidPixels[localId];
-    if (!solid) return false;
-
-    /* Where within this tile (in world pixels) are we? */
-    var tileOriginX = col * STW;
-    var tileOriginY = row * STH;
-
-    /* Map world pixel → tile pixel (accounting for 3x scale) */
-    var tpx = Math.floor((worldX - tileOriginX) / SCALE);
-    var tpy = Math.floor((worldY - tileOriginY) / SCALE);
-
-    tpx = Math.max(0, Math.min(TILE_W - 1, tpx));
-    tpy = Math.max(0, Math.min(TILE_H - 1, tpy));
-
-    return solid[tpy * TILE_W + tpx] === 1;
   }
 
   /* ─── Layers ─────────────────────────────────────────── */
@@ -154,11 +129,6 @@
   /* ─── Animated layer ─────────────────────────────────── */
   var aniOffset = 0;
   var ANI_SPEED = 0.4;
-
-  /* ─── Parallax ───────────────────────────────────────── */
-  var PAR_1BG  = 0.15;
-  var PAR_2BG  = 0.35;
-  var PAR_2BG2 = 0.55;
 
   /* ══════════════════════════════════════════════════════
      TILE DRAWING
@@ -186,9 +156,6 @@
     ctx.drawImage(ts.img, srcX, srcY, TILE_W, TILE_H, px, py, STW, STH);
   }
 
-  /* ══════════════════════════════════════════════════════
-     LAYER RENDERING
-  ══════════════════════════════════════════════════════ */
   function drawLayer(data, offsetX, offsetY) {
     if (!data) return;
     offsetX = offsetX || 0;
@@ -205,15 +172,40 @@
     }
   }
 
-  function drawParallax(data, factor) {
-    if (!data) return;
-    drawLayer(data, cam.x * factor, cam.y * factor);
+  /* ══════════════════════════════════════════════════════
+     PIXEL-PERFECT COLLISION
+  ══════════════════════════════════════════════════════ */
+  function isSolidPixel(worldX, worldY) {
+    if (!layers.ground) return false;
+    var col = Math.floor(worldX / STW);
+    var row = Math.floor(worldY / STH);
+    if (col < 0 || col >= MAP_COLS || row < 0 || row >= MAP_ROWS) return false;
+
+    var gid = layers.ground[row * MAP_COLS + col] & 0x1FFFFFFF;
+    if (gid === 0) return false;
+
+    var ts = getTileset(gid);
+    if (!ts || ts.firstgid !== 1) return true;  // non-Tiles.png = fully solid
+
+    var localId = gid - 1;
+    var solid   = solidPixels[localId];
+    if (!solid) return false;
+
+    var tpx = Math.floor((worldX - col * STW) / SCALE);
+    var tpy = Math.floor((worldY - row * STH) / SCALE);
+    tpx = Math.max(0, Math.min(TILE_W - 1, tpx));
+    tpy = Math.max(0, Math.min(TILE_H - 1, tpy));
+
+    return solid[tpy * TILE_W + tpx] === 1;
   }
 
   /* ══════════════════════════════════════════════════════
-     PHYSICS
+     PHYSICS — stable, no vibration
+     Key fix: resolve Y collision AFTER moving,
+     snap cleanly, never fight gravity in a loop.
   ══════════════════════════════════════════════════════ */
-  var GRAVITY = 0.6;
+  var GRAVITY    = 0.55;
+  var MAX_FALL   = 18;
 
   function updatePlayer() {
     /* Horizontal */
@@ -221,56 +213,56 @@
     if (keys["ArrowRight"] || keys["d"] || keys["D"]) player.x += player.speed;
     player.x = Math.max(0, Math.min(MAP_PX_W - PLAYER_W, player.x));
 
-    /* Gravity */
-    player.vy += GRAVITY;
-    player.y  += player.vy;
+    /* Horizontal wall check */
+    var midY = player.y + PLAYER_H * 0.6;
+    if (isSolidPixel(player.x + 2,            midY)) player.x += player.speed;
+    if (isSolidPixel(player.x + PLAYER_W - 2, midY)) player.x -= player.speed;
+
+    /* Gravity — cap fall speed */
+    player.vy = Math.min(player.vy + GRAVITY, MAX_FALL);
+    player.y += player.vy;
     player.onGround = false;
 
-    /* ── Feet collision — check 3 points across the bottom ──
-       Step upward pixel by pixel until no collision,
-       then snap. This handles slopes naturally.           */
     var leftX  = player.x + 4;
     var midX   = player.x + PLAYER_W / 2;
     var rightX = player.x + PLAYER_W - 4;
-    var feetY  = player.y + PLAYER_H;
 
-    if (
-      isSolidPixel(leftX,  feetY) ||
-      isSolidPixel(midX,   feetY) ||
-      isSolidPixel(rightX, feetY)
-    ) {
-      /* Walk up one pixel at a time until feet are free */
-      while (
-        player.vy >= 0 && (
-          isSolidPixel(leftX,  player.y + PLAYER_H) ||
-          isSolidPixel(midX,   player.y + PLAYER_H) ||
-          isSolidPixel(rightX, player.y + PLAYER_H)
-        )
+    if (player.vy >= 0) {
+      /* Falling — check feet */
+      var feetY = player.y + PLAYER_H;
+      if (
+        isSolidPixel(leftX,  feetY) ||
+        isSolidPixel(midX,   feetY) ||
+        isSolidPixel(rightX, feetY)
       ) {
-        player.y--;
+        /* Snap: move back up until feet are free */
+        player.y  -= player.vy;   // undo this frame's move
+        /* Step down one pixel at a time to find exact surface */
+        while (
+          !isSolidPixel(leftX,  player.y + PLAYER_H) &&
+          !isSolidPixel(midX,   player.y + PLAYER_H) &&
+          !isSolidPixel(rightX, player.y + PLAYER_H)
+        ) {
+          player.y++;
+        }
+        player.y--;   // one pixel back so feet aren't inside tile
+        player.vy      = 0;
+        player.onGround = true;
       }
-      player.vy      = 0;
-      player.onGround = true;
+    } else {
+      /* Rising — check head */
+      var headY = player.y;
+      if (
+        isSolidPixel(leftX,  headY) ||
+        isSolidPixel(midX,   headY) ||
+        isSolidPixel(rightX, headY)
+      ) {
+        player.y -= player.vy;
+        player.vy = 0;
+      }
     }
 
-    /* ── Ceiling collision ── */
-    var headY = player.y;
-    if (
-      isSolidPixel(leftX,  headY) ||
-      isSolidPixel(midX,   headY) ||
-      isSolidPixel(rightX, headY)
-    ) {
-      while (
-        isSolidPixel(leftX,  player.y) ||
-        isSolidPixel(midX,   player.y) ||
-        isSolidPixel(rightX, player.y)
-      ) {
-        player.y++;
-      }
-      player.vy = 0;
-    }
-
-    /* Don't fall out of map */
+    /* Map bottom fallback */
     if (player.y + PLAYER_H > MAP_PX_H) {
       player.y   = MAP_PX_H - PLAYER_H;
       player.vy  = 0;
@@ -287,7 +279,6 @@
 
   /* ══════════════════════════════════════════════════════
      GAME LOOP
-     Player is drawn LAST — on top of absolutely everything
   ══════════════════════════════════════════════════════ */
   function loop() {
     updatePlayer();
@@ -298,14 +289,11 @@
 
     ctx.clearRect(0, 0, VIEW_W, VIEW_H);
 
-    /* Backgrounds */
     drawLayer(layers.bg,  cam.x, cam.y);
     drawLayer(layers.bg2, cam.x, cam.y);
 
-    /* Parallax */
     drawParallax(layers["1bg"],  PAR_1BG);
 
-    /* Animated */
     if (layers.ani) {
       drawLayer(layers.ani, cam.x - aniOffset,            cam.y);
       drawLayer(layers.ani, cam.x - aniOffset + MAP_PX_W, cam.y);
@@ -314,25 +302,19 @@
     drawParallax(layers["2bg"],  PAR_2BG);
     drawParallax(layers["2bg2"], PAR_2BG2);
 
-    /* Fade */
     for (var f = 0; f < layers.fade.length; f++) {
       drawLayer(layers.fade[f], cam.x, cam.y);
     }
 
-    /* Buildings */
     drawLayer(layers.building,   cam.x, cam.y);
     drawLayer(layers.buildings2, cam.x, cam.y);
     drawLayer(layers.buildings3, cam.x, cam.y);
+    drawLayer(layers.ground,     cam.x, cam.y);
+    drawLayer(layers.props,      cam.x, cam.y);
+    drawLayer(layers.props2,     cam.x, cam.y);
+    drawLayer(layers.props3,     cam.x, cam.y);
 
-    /* Ground */
-    drawLayer(layers.ground, cam.x, cam.y);
-
-    /* Props */
-    drawLayer(layers.props,  cam.x, cam.y);
-    drawLayer(layers.props2, cam.x, cam.y);
-    drawLayer(layers.props3, cam.x, cam.y);
-
-    /* ── PLAYER LAST — on top of everything ── */
+    /* Player — drawn absolutely last */
     var sx = Math.round(player.x - cam.x);
     var sy = Math.round(player.y - cam.y);
     ctx.fillStyle = player.color;
@@ -350,7 +332,6 @@
       var img     = new Image();
       img.onload  = function () {
         if (!ts.cols) ts.cols = Math.floor(img.naturalWidth / TILE_W);
-        /* Build pixel collision data from Tiles.png only */
         if (ts.firstgid === 1) buildCollisionData(img);
         loaded++;
         if (loaded === TILESETS.length) onDone();
@@ -394,20 +375,28 @@
       });
   }
 
-  /* Start by loading map first, then tilesets */
   loadMap(function () {
     loadTilesets(function () {
-      /* Place player on first solid ground pixel found at center column */
+      /* Find spawn — first solid ground tile in center column */
       var midCol = Math.floor(MAP_COLS / 2);
       var placed = false;
       for (var row = 0; row < MAP_ROWS && !placed; row++) {
         var gid = layers.ground ? (layers.ground[row * MAP_COLS + midCol] & 0x1FFFFFFF) : 0;
         if (gid !== 0) {
           player.y = row * STH - PLAYER_H;
-          placed = true;
+          placed   = true;
         }
       }
       if (!placed) player.y = MAP_PX_H - PLAYER_H - STH;
+
+      /* Spawn X at center of map */
+      player.x = MAP_PX_W / 2 - PLAYER_W / 2;
+      spawnX   = player.x + PLAYER_W / 2;
+
+      /* Snap camera instantly to spawn — no lerp on first frame */
+      cam.x = Math.max(0, Math.min(MAP_PX_W - VIEW_W, player.x + PLAYER_W / 2 - VIEW_W / 2));
+      cam.y = Math.max(0, Math.min(MAP_PX_H - VIEW_H, player.y + PLAYER_H / 2 - VIEW_H / 2));
+
       loop();
     });
   });
