@@ -23,15 +23,15 @@
   var MAP_PX_H = MAP_ROWS * STH;   // 960
 
   /* ─── Player — exactly 3 tiles tall ─────────────────── */
-  var PLAYER_H = STH * 3;                    // 144px
-  var PLAYER_W = Math.floor(STW * 1.5);      // 72px — 1.5 tiles wide
+  var PLAYER_H = STH * 3;          // 144px
+  var PLAYER_W = Math.floor(STW * 1.5);  // 72px
 
   var player = {
-    x:     STW * 4,
-    y:     0,
-    vy:    0,
-    speed: 5,
-    color: "#4f6ef7",
+    x:        STW * 4,
+    y:        0,
+    vy:       0,
+    speed:    5,
+    color:    "#4f6ef7",
     onGround: false,
   };
 
@@ -47,14 +47,91 @@
 
   /* ─── Tilesets ───────────────────────────────────────── */
   var TILESETS = [
-    { firstgid: 1,    src: "assets/Tiles.png",              img: null },
-    { firstgid: 55,   src: "assets/Props-01.png",           img: null },
-    { firstgid: 167,  src: "assets/Buildings.png",          img: null },
-    { firstgid: 542,  src: "assets/Background%20Props.png", img: null },
-    { firstgid: 711,  src: "assets/Base%20Color.png",       img: null },
-    { firstgid: 1311, src: "assets/Frontal%20Fog.png",      img: null },
-    { firstgid: 1320, src: "assets/Mid%20Fog.png",          img: null },
+    { firstgid: 1,    src: "assets/Tiles.png",              img: null, cols: 6 },
+    { firstgid: 55,   src: "assets/Props-01.png",           img: null, cols: null },
+    { firstgid: 167,  src: "assets/Buildings.png",          img: null, cols: null },
+    { firstgid: 542,  src: "assets/Background%20Props.png", img: null, cols: null },
+    { firstgid: 711,  src: "assets/Base%20Color.png",       img: null, cols: null },
+    { firstgid: 1311, src: "assets/Frontal%20Fog.png",      img: null, cols: null },
+    { firstgid: 1320, src: "assets/Mid%20Fog.png",          img: null, cols: null },
   ];
+
+  /* ─── Pixel-perfect collision data ──────────────────────
+     Built once at load from Tiles.png.
+     solidPixels[tileLocalId][pixelIndex] = true/false
+     pixelIndex = py * TILE_W + px  (within the 16x16 tile)
+  ──────────────────────────────────────────────────────── */
+  var solidPixels = {};   // keyed by local tile id (0-based)
+  var TILES_COLS  = 6;
+  var TILES_ROWS  = 9;
+
+  function buildCollisionData(tilesImg) {
+    /* Draw Tiles.png onto an offscreen canvas to read pixels */
+    var oc  = document.createElement("canvas");
+    oc.width  = TILES_COLS * TILE_W;   // 96
+    oc.height = TILES_ROWS * TILE_H;   // 144
+    var ox  = oc.getContext("2d");
+    ox.drawImage(tilesImg, 0, 0);
+
+    var imgData = ox.getImageData(0, 0, oc.width, oc.height);
+    var pixels  = imgData.data;   // RGBA flat array
+
+    var totalTiles = TILES_COLS * TILES_ROWS;   // 54
+    for (var t = 0; t < totalTiles; t++) {
+      var tileCol = t % TILES_COLS;
+      var tileRow = Math.floor(t / TILES_COLS);
+      var solid   = new Uint8Array(TILE_W * TILE_H);
+
+      for (var py = 0; py < TILE_H; py++) {
+        for (var px = 0; px < TILE_W; px++) {
+          /* pixel position in the full spritesheet */
+          var sheetX = tileCol * TILE_W + px;
+          var sheetY = tileRow * TILE_H + py;
+          var idx    = (sheetY * oc.width + sheetX) * 4;
+          /* alpha channel — if > 0 the pixel is solid */
+          solid[py * TILE_W + px] = pixels[idx + 3] > 0 ? 1 : 0;
+        }
+      }
+      solidPixels[t] = solid;
+    }
+  }
+
+  /* ─── Check a single world pixel against ground layer ── */
+  function isSolidPixel(worldX, worldY) {
+    if (!layers.ground) return false;
+
+    /* Which tile are we in? */
+    var col = Math.floor(worldX / STW);
+    var row = Math.floor(worldY / STH);
+    if (col < 0 || col >= MAP_COLS || row < 0 || row >= MAP_ROWS) return false;
+
+    var gid = layers.ground[row * MAP_COLS + col] & 0x1FFFFFFF;
+    if (gid === 0) return false;
+
+    /* Only ground tiles (firstgid 1, tileset Tiles.png) have pixel collision */
+    var ts = getTileset(gid);
+    if (!ts || ts.firstgid !== 1) {
+      /* Non-Tiles.png tile — treat whole tile as solid */
+      return true;
+    }
+
+    var localId = gid - 1;   // 0-based
+    var solid   = solidPixels[localId];
+    if (!solid) return false;
+
+    /* Where within this tile (in world pixels) are we? */
+    var tileOriginX = col * STW;
+    var tileOriginY = row * STH;
+
+    /* Map world pixel → tile pixel (accounting for 3x scale) */
+    var tpx = Math.floor((worldX - tileOriginX) / SCALE);
+    var tpy = Math.floor((worldY - tileOriginY) / SCALE);
+
+    tpx = Math.max(0, Math.min(TILE_W - 1, tpx));
+    tpy = Math.max(0, Math.min(TILE_H - 1, tpy));
+
+    return solid[tpy * TILE_W + tpx] === 1;
+  }
 
   /* ─── Layers ─────────────────────────────────────────── */
   var layers = {
@@ -78,10 +155,10 @@
   var aniOffset = 0;
   var ANI_SPEED = 0.4;
 
-  /* ─── Parallax — very subtle ─────────────────────────── */
-  var PAR_1BG  = 0.02;
-  var PAR_2BG  = 0.05;
-  var PAR_2BG2 = 0.08;
+  /* ─── Parallax ───────────────────────────────────────── */
+  var PAR_1BG  = 0.15;
+  var PAR_2BG  = 0.35;
+  var PAR_2BG2 = 0.55;
 
   /* ══════════════════════════════════════════════════════
      TILE DRAWING
@@ -103,7 +180,7 @@
     var ts = getTileset(id);
     if (!ts || !ts.img || !ts.img.complete) return;
     var localId = id - ts.firstgid;
-    var imgCols = Math.floor(ts.img.naturalWidth / TILE_W);
+    var imgCols = ts.cols || Math.floor(ts.img.naturalWidth / TILE_W);
     var srcX    = (localId % imgCols) * TILE_W;
     var srcY    = Math.floor(localId / imgCols) * TILE_H;
     ctx.drawImage(ts.img, srcX, srcY, TILE_W, TILE_H, px, py, STW, STH);
@@ -128,75 +205,75 @@
     }
   }
 
-  /* Parallax: moves at a fraction of camera — very subtle */
   function drawParallax(data, factor) {
     if (!data) return;
     drawLayer(data, cam.x * factor, cam.y * factor);
   }
 
   /* ══════════════════════════════════════════════════════
-     COLLISION
-     Check if a world-pixel point lands on a solid ground tile
+     PHYSICS
   ══════════════════════════════════════════════════════ */
-  function isSolid(worldX, worldY) {
-    if (!layers.ground) return false;
-    var col = Math.floor(worldX / STW);
-    var row = Math.floor(worldY / STH);
-    if (col < 0 || col >= MAP_COLS || row < 0 || row >= MAP_ROWS) return false;
-    return (layers.ground[row * MAP_COLS + col] & 0x1FFFFFFF) !== 0;
-  }
-
-  /* ══════════════════════════════════════════════════════
-     PHYSICS — simple gravity + ground collision
-  ══════════════════════════════════════════════════════ */
-  var GRAVITY = 0.5;
+  var GRAVITY = 0.6;
 
   function updatePlayer() {
     /* Horizontal */
-    var keys_obj = keys;
-    if (keys_obj["ArrowLeft"]  || keys_obj["a"] || keys_obj["A"]) player.x -= player.speed;
-    if (keys_obj["ArrowRight"] || keys_obj["d"] || keys_obj["D"]) player.x += player.speed;
+    if (keys["ArrowLeft"]  || keys["a"] || keys["A"]) player.x -= player.speed;
+    if (keys["ArrowRight"] || keys["d"] || keys["D"]) player.x += player.speed;
     player.x = Math.max(0, Math.min(MAP_PX_W - PLAYER_W, player.x));
-
-    /* Horizontal wall collision — check left and right edges at mid height */
-    var midY = player.y + PLAYER_H * 0.5;
-    if (isSolid(player.x, midY)) {
-      player.x += player.speed;
-    }
-    if (isSolid(player.x + PLAYER_W, midY)) {
-      player.x -= player.speed;
-    }
 
     /* Gravity */
     player.vy += GRAVITY;
     player.y  += player.vy;
-
-    /* Ground collision — check feet (bottom-left and bottom-right corners) */
     player.onGround = false;
-    var feetY  = player.y + PLAYER_H;
-    var leftX  = player.x + 4;
-    var rightX = player.x + PLAYER_W - 4;
 
-    if (isSolid(leftX, feetY) || isSolid(rightX, feetY)) {
-      /* Snap to top of the tile the feet are in */
-      var row    = Math.floor(feetY / STH);
-      player.y   = row * STH - PLAYER_H;
-      player.vy  = 0;
+    /* ── Feet collision — check 3 points across the bottom ──
+       Step upward pixel by pixel until no collision,
+       then snap. This handles slopes naturally.           */
+    var leftX  = player.x + 4;
+    var midX   = player.x + PLAYER_W / 2;
+    var rightX = player.x + PLAYER_W - 4;
+    var feetY  = player.y + PLAYER_H;
+
+    if (
+      isSolidPixel(leftX,  feetY) ||
+      isSolidPixel(midX,   feetY) ||
+      isSolidPixel(rightX, feetY)
+    ) {
+      /* Walk up one pixel at a time until feet are free */
+      while (
+        player.vy >= 0 && (
+          isSolidPixel(leftX,  player.y + PLAYER_H) ||
+          isSolidPixel(midX,   player.y + PLAYER_H) ||
+          isSolidPixel(rightX, player.y + PLAYER_H)
+        )
+      ) {
+        player.y--;
+      }
+      player.vy      = 0;
       player.onGround = true;
     }
 
-    /* Ceiling collision */
+    /* ── Ceiling collision ── */
     var headY = player.y;
-    if (isSolid(leftX, headY) || isSolid(rightX, headY)) {
-      var row2   = Math.floor(headY / STH);
-      player.y   = (row2 + 1) * STH;
-      player.vy  = 0;
+    if (
+      isSolidPixel(leftX,  headY) ||
+      isSolidPixel(midX,   headY) ||
+      isSolidPixel(rightX, headY)
+    ) {
+      while (
+        isSolidPixel(leftX,  player.y) ||
+        isSolidPixel(midX,   player.y) ||
+        isSolidPixel(rightX, player.y)
+      ) {
+        player.y++;
+      }
+      player.vy = 0;
     }
 
-    /* Fallback — don't fall out of map */
+    /* Don't fall out of map */
     if (player.y + PLAYER_H > MAP_PX_H) {
-      player.y  = MAP_PX_H - PLAYER_H;
-      player.vy = 0;
+      player.y   = MAP_PX_H - PLAYER_H;
+      player.vy  = 0;
       player.onGround = true;
     }
   }
@@ -210,30 +287,18 @@
 
   /* ══════════════════════════════════════════════════════
      GAME LOOP
-     Draw order:
-       bg, bg2 (fixed)
-       1bg (parallax)
-       ani (animated)
-       2bg, 2bg2 (parallax)
-       fade x2 (fixed)
-       building, buildings2, buildings3 (fixed)
-       ground (fixed)
-       *** PLAYER ***   ← on top of ground, under nothing
-       props, props2, props3 (fixed foreground — drawn AFTER player
-                              only if you want them in front;
-                              swap below if you want player in front)
+     Player is drawn LAST — on top of absolutely everything
   ══════════════════════════════════════════════════════ */
   function loop() {
     updatePlayer();
     updateCamera();
 
-    /* Animated offset */
     aniOffset += ANI_SPEED;
     if (aniOffset > MAP_PX_W) aniOffset = 0;
 
     ctx.clearRect(0, 0, VIEW_W, VIEW_H);
 
-    /* Background fixed */
+    /* Backgrounds */
     drawLayer(layers.bg,  cam.x, cam.y);
     drawLayer(layers.bg2, cam.x, cam.y);
 
@@ -262,17 +327,16 @@
     /* Ground */
     drawLayer(layers.ground, cam.x, cam.y);
 
-    /* ── PLAYER — drawn here, on top of ground ── */
+    /* Props */
+    drawLayer(layers.props,  cam.x, cam.y);
+    drawLayer(layers.props2, cam.x, cam.y);
+    drawLayer(layers.props3, cam.x, cam.y);
+
+    /* ── PLAYER LAST — on top of everything ── */
     var sx = Math.round(player.x - cam.x);
     var sy = Math.round(player.y - cam.y);
     ctx.fillStyle = player.color;
     ctx.fillRect(sx, sy, PLAYER_W, PLAYER_H);
-
-    /* Props drawn AFTER player so they appear in front.
-       If you want player in front of props, move the 3 lines above the player block. */
-    drawLayer(layers.props,  cam.x, cam.y);
-    drawLayer(layers.props2, cam.x, cam.y);
-    drawLayer(layers.props3, cam.x, cam.y);
 
     requestAnimationFrame(loop);
   }
@@ -284,10 +348,19 @@
     var loaded = 0;
     TILESETS.forEach(function (ts) {
       var img     = new Image();
-      img.onload  = function () { loaded++; if (loaded === TILESETS.length) onDone(); };
-      img.onerror = function () { loaded++; if (loaded === TILESETS.length) onDone(); };
-      img.src     = ts.src;
-      ts.img      = img;
+      img.onload  = function () {
+        if (!ts.cols) ts.cols = Math.floor(img.naturalWidth / TILE_W);
+        /* Build pixel collision data from Tiles.png only */
+        if (ts.firstgid === 1) buildCollisionData(img);
+        loaded++;
+        if (loaded === TILESETS.length) onDone();
+      };
+      img.onerror = function () {
+        loaded++;
+        if (loaded === TILESETS.length) onDone();
+      };
+      img.src = ts.src;
+      ts.img  = img;
     });
   }
 
@@ -313,18 +386,6 @@
           else if (name === "props2")     layers.props2     = layer.data;
           else if (name === "props3")     layers.props3     = layer.data;
         });
-
-        /* Place player on top of first solid ground tile found */
-        if (layers.ground) {
-          for (var row = MAP_ROWS - 1; row >= 0; row--) {
-            var mid = Math.floor(MAP_COLS / 2);
-            if ((layers.ground[row * MAP_COLS + mid] & 0x1FFFFFFF) !== 0) {
-              player.y = row * STH - PLAYER_H;
-              break;
-            }
-          }
-        }
-
         onDone();
       })
       .catch(function (err) {
@@ -333,8 +394,20 @@
       });
   }
 
+  /* Start by loading map first, then tilesets */
   loadMap(function () {
     loadTilesets(function () {
+      /* Place player on first solid ground pixel found at center column */
+      var midCol = Math.floor(MAP_COLS / 2);
+      var placed = false;
+      for (var row = 0; row < MAP_ROWS && !placed; row++) {
+        var gid = layers.ground ? (layers.ground[row * MAP_COLS + midCol] & 0x1FFFFFFF) : 0;
+        if (gid !== 0) {
+          player.y = row * STH - PLAYER_H;
+          placed = true;
+        }
+      }
+      if (!placed) player.y = MAP_PX_H - PLAYER_H - STH;
       loop();
     });
   });
