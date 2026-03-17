@@ -3,30 +3,56 @@
 
   var canvas = document.getElementById("game-canvas");
   var ctx    = canvas.getContext("2d");
+
+  /* ─── Fixed canvas resolution ────────────────────────── */
+  var VIEW_W = 1280;
+  var VIEW_H = 720;
+  canvas.width  = VIEW_W;
+  canvas.height = VIEW_H;
   ctx.imageSmoothingEnabled = false;
 
-  /* ─── Proportions ────────────────────────────────────── */
-  var GROUND_RATIO = 0.85;
-  var PLAYER_RATIO = 0.08;  // smaller — fits naturally in the map
+  /* ─── Tile + map size ────────────────────────────────── */
+  var TILE_W   = 16;
+  var TILE_H   = 16;
+  var SCALE    = 3;          // render each tile at 3x → 48×48px
+  var STW      = TILE_W * SCALE;  // scaled tile width  = 48
+  var STH      = TILE_H * SCALE;  // scaled tile height = 48
+  var MAP_COLS = 40;
+  var MAP_ROWS = 20;
+  var MAP_PX_W = MAP_COLS * STW;  // 1920px
+  var MAP_PX_H = MAP_ROWS * STH;  // 960px
 
-  var groundY = 0;
-  var playerH = 0;
-  var playerW = 0;
+  /* ─── Player ─────────────────────────────────────────── */
+  /* About 2 tiles tall at 3x scale = 96px, which is ~13% of 720 */
+  var PLAYER_H = STH * 2;
+  var PLAYER_W = Math.floor(PLAYER_H * 0.5);
 
   var player = {
-    x:     0,
+    x:     STW * 4,                      // start a few tiles in
     y:     0,
-    speed: 5,
+    speed: 4,
     color: "#4f6ef7"
   };
 
-  /* ─── Map constants ──────────────────────────────────── */
-  var TILE_W    = 16;
-  var TILE_H    = 16;
-  var MAP_COLS  = 40;
-  var MAP_ROWS  = 20;
+  /* Ground Y in world space — row 17 is where ground tiles start */
+  var GROUND_ROW = 17;
+  var groundWorldY = GROUND_ROW * STH - PLAYER_H;
 
-  /* ─── Tileset image paths ────────────────────────────── */
+  player.y = groundWorldY;
+
+  /* ─── Camera ─────────────────────────────────────────── */
+  var cam = { x: 0, y: 0 };
+
+  function updateCamera() {
+    /* Center camera on player */
+    cam.x = player.x + PLAYER_W / 2 - VIEW_W / 2;
+    cam.y = player.y + PLAYER_H / 2 - VIEW_H / 2;
+    /* Clamp to map bounds */
+    cam.x = Math.max(0, Math.min(MAP_PX_W - VIEW_W, cam.x));
+    cam.y = Math.max(0, Math.min(MAP_PX_H - VIEW_H, cam.y));
+  }
+
+  /* ─── Tilesets ───────────────────────────────────────── */
   var TILESETS = [
     { firstgid: 1,    src: "assets/Tiles.png",              img: null },
     { firstgid: 55,   src: "assets/Props-01.png",           img: null },
@@ -37,7 +63,7 @@
     { firstgid: 1320, src: "assets/Mid%20Fog.png",          img: null },
   ];
 
-  /* ─── Layer data ─────────────────────────────────────── */
+  /* ─── Layers ─────────────────────────────────────────── */
   var layers = {
     bg:         null,
     bg2:        null,
@@ -55,42 +81,18 @@
     props3:     null,
   };
 
-  /* ─── Animated layer state ───────────────────────────── */
+  /* ─── Animated layer ─────────────────────────────────── */
   var aniOffset = 0;
-  var ANI_SPEED = 0.3;
+  var ANI_SPEED = 0.4;
 
-  /* ─── Parallax factors ───────────────────────────────── */
-  var PARALLAX_1BG  = 0.02;
-  var PARALLAX_2BG  = 0.05;
-  var PARALLAX_2BG2 = 0.08;
-
-  /* ─── Scale: map fills canvas ────────────────────────── */
-  var scaleX = 1;
-  var scaleY = 1;
+  /* ─── Parallax ───────────────────────────────────────── */
+  /* How much each layer shifts relative to camera movement */
+  var PAR_1BG  = 0.1;   // furthest — moves least
+  var PAR_2BG  = 0.3;
+  var PAR_2BG2 = 0.5;
 
   /* ══════════════════════════════════════════════════════
-     RESIZE
-  ══════════════════════════════════════════════════════ */
-  function resize() {
-    canvas.width  = window.innerWidth;
-    canvas.height = window.innerHeight;
-    ctx.imageSmoothingEnabled = false;
-
-    scaleX = canvas.width  / (MAP_COLS * TILE_W);
-    scaleY = canvas.height / (MAP_ROWS * TILE_H);
-
-    groundY = Math.floor(canvas.height * GROUND_RATIO);
-    playerH = Math.floor(canvas.height * PLAYER_RATIO);
-    playerW = Math.floor(playerH * 0.5);
-
-    player.y = groundY - playerH;
-    if (player.x === 0) player.x = Math.floor(canvas.width * 0.1);
-  }
-  window.addEventListener("resize", resize);
-  resize();
-
-  /* ══════════════════════════════════════════════════════
-     TILESET HELPERS
+     TILE DRAWING
   ══════════════════════════════════════════════════════ */
   function getTileset(gid) {
     var id = gid & 0x1FFFFFFF;
@@ -103,7 +105,7 @@
     return ts;
   }
 
-  function drawTile(gid, px, py, tw, th) {
+  function drawTile(gid, px, py) {
     var id = gid & 0x1FFFFFFF;
     if (id === 0) return;
     var ts = getTileset(id);
@@ -112,62 +114,52 @@
     var imgCols = Math.floor(ts.img.naturalWidth / TILE_W);
     var srcX    = (localId % imgCols) * TILE_W;
     var srcY    = Math.floor(localId / imgCols) * TILE_H;
-    ctx.drawImage(ts.img, srcX, srcY, TILE_W, TILE_H, px, py, tw, th);
+    ctx.drawImage(ts.img, srcX, srcY, TILE_W, TILE_H, px, py, STW, STH);
   }
 
   /* ══════════════════════════════════════════════════════
      LAYER RENDERING
+     offsetX is in world pixels (camera already applied outside)
   ══════════════════════════════════════════════════════ */
-  function drawLayer(data, offsetX) {
+  function drawLayer(data, camOffsetX, camOffsetY) {
     if (!data) return;
-    offsetX = offsetX || 0;
-    var tw = scaleX * TILE_W;
-    var th = scaleY * TILE_H;
+    camOffsetX = camOffsetX || 0;
+    camOffsetY = camOffsetY || 0;
+
     for (var i = 0; i < data.length; i++) {
       if (data[i] === 0) continue;
-      var col = i % MAP_COLS;
-      var row = Math.floor(i / MAP_COLS);
-      drawTile(data[i], col * tw + offsetX, row * th, tw, th);
+      var col   = i % MAP_COLS;
+      var row   = Math.floor(i / MAP_COLS);
+      var worldX = col * STW;
+      var worldY = row * STH;
+      var screenX = worldX - camOffsetX;
+      var screenY = worldY - camOffsetY;
+
+      /* Skip tiles outside viewport */
+      if (screenX + STW < 0 || screenX > VIEW_W) continue;
+      if (screenY + STH < 0 || screenY > VIEW_H) continue;
+
+      drawTile(data[i], screenX, screenY);
     }
   }
 
-  function parallaxOffset(factor) {
-    var center   = canvas.width * 0.5;
-    var playerCX = player.x + playerW * 0.5;
-    return (playerCX - center) * factor * -1;
+  /* Parallax: layer moves at a fraction of camera speed */
+  function drawParallax(data, factor) {
+    if (!data) return;
+    var offsetX = cam.x * factor;
+    var offsetY = cam.y * factor;
+    drawLayer(data, offsetX, offsetY);
   }
 
   /* ══════════════════════════════════════════════════════
-     COLLISION
+     COLLISION (ground layer)
   ══════════════════════════════════════════════════════ */
-  function isSolidAt(wx, wy) {
+  function isSolidAt(worldX, worldY) {
     if (!layers.ground) return false;
-    var col = Math.floor(wx / (scaleX * TILE_W));
-    var row = Math.floor(wy / (scaleY * TILE_H));
+    var col = Math.floor(worldX / STW);
+    var row = Math.floor(worldY / STH);
     if (col < 0 || col >= MAP_COLS || row < 0 || row >= MAP_ROWS) return true;
     return (layers.ground[row * MAP_COLS + col] & 0x1FFFFFFF) !== 0;
-  }
-
-  function resolveCollision() {
-    var feetY  = player.y + playerH;
-    var leftX  = player.x + 2;
-    var rightX = player.x + playerW - 2;
-    if (isSolidAt(leftX, feetY) || isSolidAt(rightX, feetY)) {
-      var th   = scaleY * TILE_H;
-      var row  = Math.floor(feetY / th);
-      player.y = row * th - playerH;
-    }
-    var midY = player.y + playerH * 0.5;
-    if (isSolidAt(player.x, midY)) {
-      var tw  = scaleX * TILE_W;
-      var col = Math.floor(player.x / tw);
-      player.x = (col + 1) * tw;
-    }
-    if (isSolidAt(player.x + playerW, midY)) {
-      var tw2  = scaleX * TILE_W;
-      var col2 = Math.floor((player.x + playerW) / tw2);
-      player.x = col2 * tw2 - playerW;
-    }
   }
 
   /* ══════════════════════════════════════════════════════
@@ -182,38 +174,60 @@
   ══════════════════════════════════════════════════════ */
   function loop() {
 
+    /* Movement */
     if (keys["ArrowLeft"]  || keys["a"] || keys["A"]) player.x -= player.speed;
     if (keys["ArrowRight"] || keys["d"] || keys["D"]) player.x += player.speed;
 
-    player.x = Math.max(0, Math.min(canvas.width - playerW, player.x));
-    player.y = groundY - playerH;
+    /* Clamp player to map */
+    player.x = Math.max(0, Math.min(MAP_PX_W - PLAYER_W, player.x));
+    player.y = groundWorldY;
 
-    resolveCollision();
+    /* Camera */
+    updateCamera();
 
+    /* Animated layer offset */
     aniOffset += ANI_SPEED;
-    if (aniOffset > canvas.width) aniOffset = -canvas.width;
+    if (aniOffset > MAP_PX_W) aniOffset = 0;
 
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    /* ── Draw ── */
+    ctx.clearRect(0, 0, VIEW_W, VIEW_H);
 
-    drawLayer(layers.bg);
-    drawLayer(layers.bg2);
-    drawLayer(layers["1bg"],  parallaxOffset(PARALLAX_1BG));
-    drawLayer(layers.ani,     aniOffset);
-    drawLayer(layers.ani,     aniOffset - canvas.width);
-    drawLayer(layers["2bg"],  parallaxOffset(PARALLAX_2BG));
-    drawLayer(layers["2bg2"], parallaxOffset(PARALLAX_2BG2));
-    for (var f = 0; f < layers.fade.length; f++) drawLayer(layers.fade[f]);
-    drawLayer(layers.building);
-    drawLayer(layers.buildings2);
-    drawLayer(layers.buildings3);
-    drawLayer(layers.ground);
+    /* Fixed layers — scroll 1:1 with camera */
+    drawLayer(layers.bg,         cam.x, cam.y);
+    drawLayer(layers.bg2,        cam.x, cam.y);
 
+    /* Parallax — scroll slower than camera */
+    drawParallax(layers["1bg"],  PAR_1BG);
+    
+    /* Animated — slides independently + camera */
+    if (layers.ani) {
+      drawLayer(layers.ani, cam.x - aniOffset, cam.y);
+      /* second copy for seamless loop */
+      drawLayer(layers.ani, cam.x - aniOffset + MAP_PX_W, cam.y);
+    }
+
+    drawParallax(layers["2bg"],  PAR_2BG);
+    drawParallax(layers["2bg2"], PAR_2BG2);
+
+    /* Fixed layers */
+    for (var f = 0; f < layers.fade.length; f++) {
+      drawLayer(layers.fade[f], cam.x, cam.y);
+    }
+    drawLayer(layers.building,   cam.x, cam.y);
+    drawLayer(layers.buildings2, cam.x, cam.y);
+    drawLayer(layers.buildings3, cam.x, cam.y);
+    drawLayer(layers.ground,     cam.x, cam.y);
+
+    /* Player */
+    var screenX = player.x - cam.x;
+    var screenY = player.y - cam.y;
     ctx.fillStyle = player.color;
-    ctx.fillRect(player.x, player.y, playerW, playerH);
+    ctx.fillRect(screenX, screenY, PLAYER_W, PLAYER_H);
 
-    drawLayer(layers.props);
-    drawLayer(layers.props2);
-    drawLayer(layers.props3);
+    /* Foreground props */
+    drawLayer(layers.props,  cam.x, cam.y);
+    drawLayer(layers.props2, cam.x, cam.y);
+    drawLayer(layers.props3, cam.x, cam.y);
 
     requestAnimationFrame(loop);
   }
